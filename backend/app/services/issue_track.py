@@ -7,6 +7,7 @@ from __future__ import annotations
 import time as _time
 from typing import Any
 
+from app.services import exemption_engine as engine
 from app.services.base import BaseModuleService
 from app.store import store
 
@@ -15,7 +16,11 @@ class IssueTrackService(BaseModuleService):
     MODULE = "issue_track"
     ENTITY = "治理问题"
     OPERATION_TERM = "关联"
-    LIST_FIELDS = ["问题编号", "关联资产", "问题类型", "严重级别", "指派处理", "当前状态", "修复方案", "截止日期"]
+    LIST_FIELDS = [
+        "问题编号", "关联资产", "问题类型", "严重级别", "指派处理", "当前状态",
+        "修复方案", "截止日期", "数据分区", "违规字段", "合规条款", "检查规则",
+        "观测日期", "整改要求", "豁免编号", "豁免适用日期",
+    ]
     REQUIRED_FIELDS = ["问题编号", "关联资产", "问题类型"]
     STATUS_ORDER = ["待确认", "处理中", "已修复", "已验证"]
     ACTION_RULES = {"确认问题": "处理中", "指派处理": "处理中", "验证修复": "已验证"}
@@ -110,6 +115,71 @@ class IssueTrackService(BaseModuleService):
     def get_issues_by_severity(self, severity: str) -> list[dict[str, Any]]:
         """按严重级别获取问题。"""
         return store.find_by_field(self.MODULE, "严重级别", severity)
+
+    def get_issues_by_observation_date(self, observed_on: str) -> list[dict[str, Any]]:
+        """按观测日获取问题，含已被豁免但保留追溯的已派出条目。"""
+        observed = engine.normalize_date(observed_on)
+        return [
+            row for row in store.rows(self.MODULE)
+            if engine.normalize_date(row.get("观测日期")) == observed
+        ]
+
+    def get_issues_by_clause(self, clause: str, observed_on: str | None = None) -> list[dict[str, Any]]:
+        """按仍适用的违规条款查找问题；豁免条目不会被当作待整改分派。"""
+        rows = [
+            row for row in store.rows(self.MODULE)
+            if engine.clause_match(row.get("合规条款"), clause)
+        ]
+        if observed_on:
+            observed = engine.normalize_date(observed_on)
+            rows = [row for row in rows if engine.normalize_date(row.get("观测日期")) == observed]
+        return rows
+
+    def get_dispatchable_issues(self, observed_on: str | None = None) -> list[dict[str, Any]]:
+        """问题追踪真正要分派的范围：豁免范围内的条目只保留追溯，不再派整改。"""
+        rows = [
+            row for row in store.rows(self.MODULE)
+            if row.get("整改要求") != "无需整改" and row.get("status") != "已豁免"
+        ]
+        if observed_on:
+            observed = engine.normalize_date(observed_on)
+            rows = [row for row in rows if engine.normalize_date(row.get("观测日期")) == observed]
+        return rows
+
+    def get_exempted_issues(self, observed_on: str | None = None) -> list[dict[str, Any]]:
+        """已经派出、后补豁免的条目：可追到豁免编号和适用日期。"""
+        rows = [row for row in store.rows(self.MODULE) if row.get("status") == "已豁免"]
+        if observed_on:
+            observed = engine.normalize_date(observed_on)
+            rows = [row for row in rows if engine.normalize_date(row.get("观测日期")) == observed]
+        return rows
+
+    def trace_exemption(self, issue_id: int) -> dict[str, Any] | None:
+        """沿整改单追到豁免凭据与适用日期，供复查核对。"""
+        issue = self.get_entry(issue_id)
+        if issue is None:
+            return None
+        exemption = next(
+            (row for row in store.rows("clause_exemption")
+             if row.get("豁免编号") == issue.get("豁免编号")),
+            None,
+        )
+        checks = [
+            row for row in store.rows("exemption_check")
+            if row.get("豁免编号") == issue.get("豁免编号")
+            and row.get("违规字段") == issue.get("违规字段")
+            and row.get("合规条款") == issue.get("合规条款")
+        ]
+        return {
+            "issue": issue,
+            "exemption": exemption,
+            "checks": checks,
+            "exempted_on": issue.get("豁免适用日期", ""),
+            "observation_date": issue.get("观测日期", ""),
+        }
+
+    def remediation_scope(self, **filters: Any) -> dict[str, Any]:
+        return engine.remediation_scope(**filters)
 
     def get_issues_by_assignee(self, assignee: str) -> list[dict[str, Any]]:
         """按指派人获取问题。"""

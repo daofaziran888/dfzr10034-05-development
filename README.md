@@ -67,11 +67,38 @@ npm run dev
 | 治理评分 | `govern_score` | 评分任务 | 任务编号、评估对象、评分维度 |
 | 数据契约 | `data_contract` | 契约定义 | 契约编号、数据资产、Schema约束 |
 | 合规扫描 | `compliance_scan` | 扫描任务 | 任务编号、目标资产、合规条款 |
+| 条款豁免 | `clause_exemption` | 条款豁免 | 豁免编号、适用条款、数据分区、违规字段、生效日期、失效日期 |
+| 扫描违规明细 | `scan_violation` | 扫描违规明细 | 明细编号、数据分区、违规字段、合规条款、观测日期、核验结论 |
+| 豁免核验明细 | `exemption_check` | 豁免核验明细 | 核验编号、明细编号、观测日期、豁免编号、核验结论、整改要求 |
 | 问题追踪 | `issue_track` | 治理问题 | 问题编号、关联资产、问题类型 |
 | 版本履历 | `version_history` | 版本快照 | 快照编号、目标资产、版本标签 |
 | 调度治理 | `schedule_job` | 治理调度 | 作业编号、治理类型、目标资产 |
 | 差异报告 | `diff_report` | 差异记录 | 记录编号、比较对象、比较维度 |
 | 负责人管理 | `owner_mgr` | 责任人 | 指派编号、目标资产、负责角色 |
+
+## 条款豁免与复查
+
+合规扫描出的字段违规先落到 `scan_violation`（字段级明细，一条只对应一个条款），
+再由 `clause_exemption` 按“条款 + 分区 + 字段 + 检查规则 + 观测日”核验：
+
+- 豁免有生效日期和失效日期，按**原观测日**判定，补报的豁免同样追溯原观测日有效；
+- 同一条款不会因为字段被另一条款命中而连带豁免，C7 的凭据带不走 C9 的运费；
+- 同一范围、同一有效期的豁免重复提交只保留一条；同一违规键重复提交只保留一条整改；
+- 已派出的整改单保留，但回写豁免编号和适用日期（`豁免适用日期`），可沿
+  `GET /api/issue_track/{id}/exemption-trace` 追到凭据；
+- `exemption_check` 留存每轮核验明细，复查人员可按观测日查询仍应整改的字段。
+
+相关接口：
+
+| 接口 | 说明 |
+| --- | --- |
+| `POST /api/compliance_scan/field-scan` | 按分区、观测日逐字段逐条款扫描并核验豁免 |
+| `POST /api/clause_exemption/check` | 核验单条规定、分区、字段在指定观测日是否被豁免 |
+| `GET /api/exemption-review` | 整改范围视图：仍需整改字段、已豁免字段、经办人整改范围 |
+| `GET /api/exemption_check/audit` | 条款豁免核验明细汇总 |
+| `GET /api/issue_track/{id}/exemption-trace` | 从整改单追溯豁免凭据与适用日期 |
+
+前端 `/#/exemption-review`（`src/views/ExemptionReviewView.vue`）提供同一份复查视图。
 
 ## 约定
 
